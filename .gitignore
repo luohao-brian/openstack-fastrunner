@@ -1,0 +1,40 @@
+*.pyc
+*.log
+.fastrunner-venv
+.venv
+.testrepository/
+.tox
+.coverage*
+cover/*
+covhtml
+nosetests.xml
+coverage.xml
+fastrunner.sqlite
+AUTHORS
+ChangeLog
+build
+.DS_Store
+dist
+*.egg
+fastrunner.egg-info
+tests.sqlite
+fastrunner/versioninfo
+etc/fastrunner.conf.sample
+!/.coveragerc
+
+#Files created by releasenotes build
+releasenotes/build
+# Swap files range from .saa to .swp
+*.s[a-w][a-p]
+
+# Files created by doc build
+doc/source/api
+
+# IDE files
+.project
+.pydevproject
+.idea
+.e4p
+.eric5project/
+.issues/
+.ropeproject
