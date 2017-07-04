@@ -27,7 +27,6 @@ from fastrunner import version
 
 CONF = cfg.CONF
 
-_DEFAULT_SQL_CONNECTION = 'sqlite:///' + paths.state_path_def('fastrunner.sqlite')
 
 # NOTE(mikal): suds is used by the vmware driver, removing this will
 # cause many extraneous log lines for their tempest runs. Refer to
@@ -50,8 +49,6 @@ def parse_args(argv, default_config_files=None, configure_db=True,
                init_rpc=True):
     log.set_defaults(_DEFAULT_LOGGING_CONTEXT_FORMAT, _DEFAULT_LOG_LEVELS)
     log.register_options(CONF)
-    options.set_defaults(CONF, connection=_DEFAULT_SQL_CONNECTION,
-                         sqlite_db='fastrunner.sqlite')
     cache.configure(CONF)
     debugger.register_cli_opts()
     config.set_middleware_defaults()
