@@ -29,7 +29,6 @@ from oslo_service import service
 from oslo_utils import importutils
 
 from fastrunner import context
-from fastrunner import debugger
 from fastrunner import exception
 from fastrunner.i18n import _, _LE, _LI, _LW
 from fastrunner import utils

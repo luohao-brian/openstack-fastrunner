@@ -135,7 +135,7 @@ class LoadedExtensionInfo(object):
         alias = ext.alias
 
         if alias in self.extensions:
-            raise exception.NovaException("Found duplicate extension: %s"
+            raise exception.FastrunnerException("Found duplicate extension: %s"
                                           % alias)
         self.extensions[alias] = ext
         return True
