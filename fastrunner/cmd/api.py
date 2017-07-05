@@ -14,10 +14,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-"""Starter script for Nova API.
-
-Starts both the EC2 and OpenStack APIs in separate greenthreads.
-
+"""Starter script for Fastrunner API.
 """
 
 import sys
@@ -29,7 +26,6 @@ import six
 
 from fastrunner import config
 from fastrunner import service
-from fastrunner import utils
 from fastrunner import version
 
 CONF = cfg.CONF
@@ -38,7 +34,6 @@ CONF = cfg.CONF
 def main():
     config.parse_args(sys.argv)
     logging.setup(CONF, "fastrunner")
-    utils.monkey_patch()
     log = logging.getLogger(__name__)
     gmr.TextGuruMeditation.setup_autorun(version)
 
