@@ -26,7 +26,6 @@ import six
 
 from fastrunner import config
 from fastrunner import service
-from fastrunner import version
 
 CONF = cfg.CONF
 
@@ -35,7 +34,6 @@ def main():
     config.parse_args(sys.argv)
     logging.setup(CONF, "fastrunner")
     log = logging.getLogger(__name__)
-    gmr.TextGuruMeditation.setup_autorun(version)
 
 
     server = service.WSGIService("fastrunner", use_ssl=False)
