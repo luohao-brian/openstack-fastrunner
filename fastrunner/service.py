@@ -32,7 +32,6 @@ from fastrunner import context
 from fastrunner import exception
 from fastrunner.i18n import _, _LE, _LI, _LW
 from fastrunner import utils
-from fastrunner import version
 from fastrunner import wsgi
 
 LOG = logging.getLogger(__name__)
