@@ -21,10 +21,9 @@ import sys
 
 from oslo_config import cfg
 from oslo_log import log as logging
-from oslo_reports import guru_meditation_report as gmr
 import six
 
-from fastrunner import config
+from fastrunner import utils
 from fastrunner import service
 from fastrunner.sync import sync_service
 
@@ -32,7 +31,7 @@ CONF = cfg.CONF
 
 
 def main():
-    config.parse_args(sys.argv)
+    utils.parse_args(sys.argv)
     logging.setup(CONF, "fastrunner")
     log = logging.getLogger(__name__)
 
