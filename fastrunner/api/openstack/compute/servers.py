@@ -27,6 +27,9 @@ import six
 import stevedore
 import webob
 from webob import exc
+from sqlalchemy import *
+import redis
+
 
 from fastrunner.api.openstack import extensions
 from fastrunner.api.openstack import wsgi
@@ -76,8 +79,23 @@ class ServersController(wsgi.Controller):
 
     @extensions.expected_errors((400, 403))
     def detail(self, req):
-        """Returns a list of server details for a given user."""
-        LOG.info("TODO detail")
+	"""Returns a list of server details for a given user."""
+        LOG.info("=========detail() started=======")
+
+        project_id = req.environ['HTTP_X_PROJECT_ID']
+        LOG.debug("type:%s" %(req.environ['HTTP_X_PROJECT_ID']))
+
+        r_redis = redis.StrictRedis(host='localhost', port=6379, db=0)
+        LOG.info("redis connected!")
+
+        uuids = r_redis.smembers("projects:%s" %(project_id))
+        LOG.info("redis test: %s" %(uuids))
+
+        for uuid in uuids:
+            instance = r_redis.hgetall("instances:%s" %(uuid))
+
+        LOG.info("=========detail() end=======")
+	return instance
 
 
     @extensions.expected_errors(404)
