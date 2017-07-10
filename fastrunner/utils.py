@@ -13,6 +13,14 @@ from oslo_context import context as common_context
 
 CONF = cfg.CONF
 
+# used in limits
+TIME_UNITS = {
+    'SECOND': 1,
+    'MINUTE': 60,
+    'HOUR': 3600,
+    'DAY': 86400
+}
+
 def spawn(func, *args, **kwargs):
     """Passthrough method for eventlet.spawn.
 
@@ -119,3 +127,4 @@ def set_middleware_defaults():
                                     'DELETE',
                                     'PATCH']
                      )
+
