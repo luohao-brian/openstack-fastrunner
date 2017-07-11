@@ -68,6 +68,11 @@ class FastrunnerException(Exception):
         self.message = message
         super(FastrunnerException, self).__init__(message)
 
+    def format_message(self):
+        # NOTE(mrodden): use the first argument to the python Exception object
+        # which should be our full NovaException message, (see __init__)
+        return self.args[0]
+
 class Invalid(FastrunnerException):
     msg_fmt = _("Unacceptable parameters.")
     code = 400

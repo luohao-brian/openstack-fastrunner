@@ -75,11 +75,25 @@ class ServersController(wsgi.Controller):
     @extensions.expected_errors((400, 403))
     def index(self, req):
         """Returns a list of server names and ids for a given user."""
+        context = req.environ['fastrunner.context']
+        authorize(context, action="index")
+
         LOG.info("TODO index")
 
     @extensions.expected_errors((400, 403))
     def detail(self, req):
 	"""Returns a list of server details for a given user."""
+        context = req.environ['fastrunner.context']
+        authorize(context, action="detail")
+
+        search_opts = {}
+        search_opts.update(req.GET)
+
+        all_tenants = self._is_all_tenants(search_opts)
+        if all_tenants:
+            authorize(context, action="detail:get_all_tenants")
+            
+
         LOG.info("=========detail() started=======")
 
         project_id = req.environ['HTTP_X_PROJECT_ID']
@@ -95,12 +109,32 @@ class ServersController(wsgi.Controller):
             instance = r_redis.hgetall("instances:%s" %(uuid))
 
         LOG.info("=========detail() end=======")
-	return instance
+        return instance
+
+    def _is_all_tenants(self, search_opts):
+        """Checks to see if the all_tenants flag is in search_opts
+    
+        :param dict search_opts: The search options for a request
+        :returns: boolean indicating if all_tenants are being requested or not
+        """
+        all_tenants = search_opts.get('all_tenants')
+        if all_tenants:
+            try:
+                all_tenants = strutils.bool_from_string(all_tenants, True)
+            except ValueError as err:
+                raise exception.InvalidInput(six.text_type(err))
+        else:
+            # The empty string is considered enabling all_tenants
+            all_tenants = 'all_tenants' in search_opts
+        return all_tenants
 
 
     @extensions.expected_errors(404)
     def show(self, req, id):
         """Returns server details by server id."""
+        context = req.environ['fastrunner.context']
+        authorize(context, action="show")
+  
         LOG.info("TODO show")
 
 
