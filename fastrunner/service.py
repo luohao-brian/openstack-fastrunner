@@ -20,6 +20,7 @@
 import os
 import random
 import sys
+import itertools
 
 from oslo_concurrency import processutils
 from oslo_config import cfg
@@ -179,3 +180,11 @@ def serve(server, workers=None):
 
 def wait():
     _launcher.wait()
+
+def list_opts():
+    return [
+        ('DEFAULT',
+         itertools.chain(
+             service_opts,
+         )),
+    ]
