@@ -16,6 +16,7 @@
 
 import base64
 import re
+import json
 
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -29,6 +30,7 @@ import webob
 from webob import exc
 from sqlalchemy import *
 
+from nova.api.openstack import common
 
 from fastrunner.api.openstack import extensions
 from fastrunner.api.openstack import wsgi
@@ -87,7 +89,7 @@ class ServersController(wsgi.Controller):
 
     @extensions.expected_errors((400, 403))
     def detail(self, req):
-	"""Returns a list of server details for a given user."""
+        """Returns a list of server details for a given user."""
         context = req.environ['fastrunner.context']
         authorize(context, action="detail")
         try:
@@ -104,12 +106,24 @@ class ServersController(wsgi.Controller):
         search_opts.update(req.GET)
 
         context = req.environ['fastrunner.context']
-       # remove_invalid_options(context, search_opts,
-       #        self._get_server_search_options(req))
 
-	search_opts.pop('status', None)
+#        remove_invalid_options(context, search_opts,
+#                self._get_server_search_options(req))
+
+        # Verify search by 'status' contains a valid status.
+        # Convert it to filter by vm_state or task_state for compute_api.
+        search_opts.pop('status', None)
         if 'status' in req.GET.keys():
             statuses = req.GET.getall('status')
+            states = common.task_and_vm_state_from_status(statuses)
+            vm_state, task_state = states
+            if not vm_state and not task_state:
+                return {'servers': []}
+            search_opts['vm_state'] = vm_state
+            # When we search by vm state, task state will return 'default'.
+            # So we don't need task_state search_opt.
+            if 'default' not in task_state:
+                search_opts['task_state'] = task_state
 
         if 'changes-since' in search_opts:
             try:
@@ -118,6 +132,12 @@ class ServersController(wsgi.Controller):
                 msg = _('Invalid changes-since value')
                 raise exc.HTTPBadRequest(explanation=msg)
             search_opts['changes-since'] = parsed
+
+        # By default, compute's get_all() will return deleted instances.
+        # If an admin hasn't specified a 'deleted' search option, we need
+        # to filter out deleted instances by setting the filter ourselves.
+        # ... Unless 'changes-since' is specified, because 'changes-since'
+        # should return recently deleted instances according to the API spec.
 
         if 'deleted' not in search_opts:
             if 'changes-since' not in search_opts:
@@ -137,11 +157,31 @@ class ServersController(wsgi.Controller):
                 msg = _("Only administrators may list deleted instances")
                 raise exc.HTTPForbidden(explanation=msg)
 
-       	#TODO 
-	#all_tenants = common.is_all_tenants(search_opts)
-        all_tenants = False
+        # If tenant_id is passed as a search parameter this should
+        # imply that all_tenants is also enabled unless explicitly
+        # disabled. Note that the tenant_id parameter is filtered out
+        # by remove_invalid_options above unless the requestor is an
+        # admin.
 
-	search_opts.pop('all_tenants', None)
+        # TODO(gmann): 'all_tenants' flag should not be required while
+        # searching with 'tenant_id'. Ref bug# 1185290
+        # +microversions to achieve above mentioned behavior by
+        # uncommenting below code.
+
+        # if 'tenant_id' in search_opts and 'all_tenants' not in search_opts:
+            # We do not need to add the all_tenants flag if the tenant
+            # id associated with the token is the tenant id
+            # specified. This is done so a request that does not need
+            # the all_tenants flag does not fail because of lack of
+            # policy permission for compute:get_all_tenants when it
+            # doesn't actually need it.
+            # if context.project_id != search_opts.get('tenant_id'):
+            #    search_opts['all_tenants'] = 1
+
+        all_tenants = common.is_all_tenants(search_opts)
+        # use the boolean from here on out so remove the entry from search_opts
+        # if it's present
+        search_opts.pop('all_tenants', None)
 
         elevated = None
         if all_tenants:
@@ -156,310 +196,92 @@ class ServersController(wsgi.Controller):
             else:
                 search_opts['user_id'] = context.user_id
 
-	#TODO
-        #limit, marker = common.get_limit_and_marker(req)
-        #sort_keys, sort_dirs = common.get_sort_params(req.params)
+        limit, marker = common.get_limit_and_marker(req)
+        sort_keys, sort_dirs = common.get_sort_params(req.params)
 
+ #       expected_attrs = ['pci_devices']
+ #       if is_detail:
+ #           # merge our expected attrs with what the view builder needs for
+ #           # showing details
+ #           expected_attrs = self._view_builder.get_show_expected_attrs(
+ #                                                               expected_attrs)
+ #
+ #       try:
+ #           instance_list = self.compute_api.get_all(elevated or context,
+ #                   search_opts=search_opts, limit=limit, marker=marker,
+ #                   want_objects=True, expected_attrs=expected_attrs,
+ #                   sort_keys=sort_keys, sort_dirs=sort_dirs)
+ #       except exception.MarkerNotFound:
+ #           msg = _('marker [%s] not found') % marker
+ #           raise exc.HTTPBadRequest(explanation=msg)
+ #       except exception.FlavorNotFound:
+ #           LOG.debug("Flavor '%s' could not be found ",
+ #                     search_opts['flavor'])
+ #           instance_list = objects.InstanceList()
+ #
+ #       if is_detail:
+ #           instance_list._context = context
+ #           instance_list.fill_faults()
+ #           response = self._view_builder.detail(req, instance_list)
+ #       else:
+ #           response = self._view_builder.index(req, instance_list)
+ #       req.cache_db_instances(instance_list)
+ #       return response
+ #
 
-	engine = create_engine('mysql://nova:redhat@localhost:3306/nova', echo=False)
-	metadata = MetaData(engine, reflect=True)
+        engine = create_engine('mysql://nova:redhat@localhost:3306/nova', echo=False)
+        metadata = MetaData(engine, reflect=True)
         conn = engine.connect()
 
-        table = metadata.tables['instances']
-	
-	select_str = select([
-	    table.c.hostname,
-	    table.c.task_state,
-	    table.c.uuid,
-	    table.c.image_ref,
-	    table.c.availability_zone,
-	    table.c.host,
-	    table.c.project_id,
-	    table.c.user_id,
-	    table.c.updated_at,
-	    table.c.power_state,
-	    table.c.vm_state]).where(
-		table.c.project_id == "%s" %(context.project_id))
-	#select_str = select([table])
-	print select_str
-        instances = conn.execute(select_str)
-	
-	filled_instances = []
-	for instance in instances:
-	    instance = {
-		'name':instance['hostname'],
-		'OS-EXT-STS:power_state':instance['power_state'],
-		'OS-EXT-STS:task_state':instance['task_state'],
-		'id':instance['uuid'],
-		'OS-EXT-AZ:availability_zone':instance['availability_zone'],
-		'OS-EXT-SRV-ATTR:host':instance['host'],
-		'tenant_id':instance['project_id']}
-
-	    filled_instances.append(instance)
-
-	return {'servers':filled_instances}
-
-	if is_detail:
- 	    expected_attrs.append('services')
-	    if api_version_request.is_supported(req, '2.26'):
-	        expected_attrs.append('tags')
-
-	    expected_attrs = ['flavor', 'info_cache', 'metadata'] + expected_attrs
-
-	try:
-            instance_list = self.get_all(elevated or context,
-                    search_opts=search_opts, limit=limit, marker=marker,
-                    want_objects=True, expected_attrs=expected_attrs,
-                    sort_keys=sort_keys, sort_dirs=sort_dirs)
-        except exception.MarkerNotFound:
-            msg = _('marker [%s] not found') % marker
-            raise exc.HTTPBadRequest(explanation=msg)
-        except exception.FlavorNotFound:
-            LOG.debug("Flavor '%s' could not be found ",
-                      search_opts['flavor'])
-            instance_list = []
-	response = dict(instance_list)
-	return response 
-
-
-    def get_all(self, context, search_opts=None, limit=None, marker=None,
-                want_objects=False, expected_attrs=None, sort_keys=None,
-                sort_dirs=None):
-        """Get all instances filtered by one of the given parameters.
-
-        If there is no filter and the context is an admin, it will retrieve
-        all instances in the system.
-
-        Deleted instances will be returned by default, unless there is a
-        search option that says otherwise.
-
-        The results will be sorted based on the list of sort keys in the
-        'sort_keys' parameter (first value is primary sort key, second value is
-        secondary sort ket, etc.). For each sort key, the associated sort
-        direction is based on the list of sort directions in the 'sort_dirs'
-        parameter.
-        """
+        instances_table = metadata.tables['instances']    
+        instance_extra_table = metadata.tables['instance_extra']
+       
+        select_str = select([
+            instances_table.c.hostname,
+            instances_table.c.task_state,
+            instances_table.c.uuid,
+            instances_table.c.image_ref,
+            instance_extra_table.c.flavor,
+            instances_table.c.availability_zone,
+            instances_table.c.host,
+            instances_table.c.project_id,
+            instances_table.c.user_id,
+            instances_table.c.created_at,
+            instances_table.c.power_state,
+            instances_table.c.vm_state]).select_from(
+                instances_table.join(instance_extra_table,
+                    instances_table.c.uuid==instance_extra_table.c.instance_uuid)).where(
+                    instances_table.c.project_id == context.project_id)
         
-	if search_opts is None:
-            search_opts = {}
+        LOG.debug("%s" %(select_str))
+        instances = conn.execute(select_str)
+    
+        filled_instances = []
+        for instance in instances:
+            status = common.status_from_state(instance['vm_state'], instance['task_state'])
+            flavor = json.JSONDecoder().decode(instance['flavor'])['cur']['nova_object.data']
+            print flavor
+            instance = {
+                'status':status,
+                'name':instance['hostname'],
+                'id':instance['uuid'],
+                'OS-EXT-STS:power_state':instance['power_state'],
+                'OS-EXT-STS:task_state':instance['task_state'],
+                'OS-EXT-AZ:availability_zone':instance['availability_zone'],
+                'flavor':{
+                    'disk':flavor['ephemeral_gb'],
+                    'vcpus':flavor['vcpus'],
+                    'ram':flavor['memory_mb'],
+                    'id':flavor['flavorid'],
+                    'name':flavor['name']},
+                'OS-EXT-SRV-ATTR:host':instance['host'],
+                'OS-SRV-USG:created_at':instance['created_at'],
+                'tenant_id':instance['project_id']}
 
-        LOG.debug("Searching by: %s", str(search_opts))
+            filled_instances.append(instance)
 
-        # Fixups for the DB call
-        filters = {}
+        return {'servers':filled_instances}
 
-        def _remap_flavor_filter(flavor_id):
-            flavor = objects.Flavor.get_by_flavor_id(context, flavor_id)
-            filters['instance_type_id'] = flavor.id
-
-        def _remap_fixed_ip_filter(fixed_ip):
-            # Turn fixed_ip into a regexp match. Since '.' matches
-            # any character, we need to use regexp escaping for it.
-            filters['ip'] = '^%s$' % fixed_ip.replace('.', '\\.')
-
-        def _remap_metadata_filter(metadata):
-            filters['metadata'] = jsonutils.loads(metadata)
-
-        def _remap_system_metadata_filter(metadata):
-            filters['system_metadata'] = jsonutils.loads(metadata)
-
-        # search_option to filter_name mapping.
-        filter_mapping = {
-                'image': 'image_ref',
-                'name': 'display_name',
-                'tenant_id': 'project_id',
-                'flavor': _remap_flavor_filter,
-                'fixed_ip': _remap_fixed_ip_filter,
-                'metadata': _remap_metadata_filter,
-                'system_metadata': _remap_system_metadata_filter}
-
-        # copy from search_opts, doing various remappings as necessary
-        for opt, value in six.iteritems(search_opts):
-            # Do remappings.
-            # Values not in the filter_mapping table are copied as-is.
-            # If remapping is None, option is not copied
-            # If the remapping is a string, it is the filter_name to use
-            try:
-                remap_object = filter_mapping[opt]
-            except KeyError:
-                filters[opt] = value
-            else:
-                # Remaps are strings to translate to, or functions to call
-                # to do the translating as defined by the table above.
-                if isinstance(remap_object, six.string_types):
-                    filters[remap_object] = value
-                else:
-                    try:
-                        remap_object(value)
-
-                    # We already know we can't match the filter, so
-                    # return an empty list
-                    except ValueError:
-                        if want_objects:
-                            return objects.InstanceList()
-                        else:
-                            return []
-
-        # IP address filtering cannot be applied at the DB layer, remove any DB
-        # limit so that it can be applied after the IP filter.
-        filter_ip = 'ip6' in filters or 'ip' in filters
-        orig_limit = limit
-        if filter_ip and limit:
-            LOG.debug('Removing limit for DB query due to IP filter')
-            limit = None
-
-
-	fields = ['metadata', 'system_metadata', 'info_cache', 'security_groups']
-
-	if expected_attrs:
-	    fields.extend(expected_attrs)
-
-	expected_attrs = fields
-	
-	func = self._get_expected_columns_method(search_opts['level'])
-	expected_columns = getattr(self, func)()
-	
-	db_inst_lsit = db.instance_get_all_by_filters_sort(context, ) 
-
-
-
-        inst_models = self._get_instances_by_filters(context, filters,
-                limit=limit, marker=marker, expected_attrs=expected_attrs,
-                sort_keys=sort_keys, sort_dirs=sort_dirs)
-
-        if filter_ip:
-            inst_models = self._ip_filter(inst_models, filters, orig_limit)
-
-        if want_objects:
-            return inst_models
-
-        # Convert the models to dictionaries
-        instances = []
-        for inst_model in inst_models:
-            instances.append(obj_base.obj_to_primitive(inst_model))
-
-        return instances
-
-
-
-    def _get_server(self, context, req, instance_uuid, is_detail=False):
-        """Utility function for looking up an instance by uuid.
-
-        :param context: request context for auth
-        :param req: HTTP request. The instance is cached in this request.
-        :param instance_uuid: UUID of the server instance to get
-        :param is_detail: True if you plan on showing the details of the
-            instance in the response, False otherwise.
-        """
-        expected_attrs = ['flavor', 'pci_devices', 'numa_topology']
-        if is_detail:
-            expected_attrs = self._view_builder.get_show_expected_attrs(
-                                                            expected_attrs)
-        instance = common.get_instance(self.compute_api, context,
-                                       instance_uuid,
-                                       expected_attrs=expected_attrs)
-        req.cache_db_instance(instance)
-        return instance
-
-    def _get_requested_networks(self, requested_networks):
-        """Create a list of requested networks from the networks attribute."""
-        networks = []
-        network_uuids = []
-        for network in requested_networks:
-            request = objects.NetworkRequest()
-            try:
-                # fixed IP address is optional
-                # if the fixed IP address is not provided then
-                # it will use one of the available IP address from the network
-                request.address = network.get('fixed_ip', None)
-                request.port_id = network.get('port', None)
-
-                if request.port_id:
-                    request.network_id = None
-                    if not utils.is_neutron():
-                        # port parameter is only for neutron v2.0
-                        msg = _("Unknown argument: port")
-                        raise exc.HTTPBadRequest(explanation=msg)
-                    if request.address is not None:
-                        msg = _("Specified Fixed IP '%(addr)s' cannot be used "
-                                "with port '%(port)s': port already has "
-                                "a Fixed IP allocated.") % {
-                                    "addr": request.address,
-                                    "port": request.port_id}
-                        raise exc.HTTPBadRequest(explanation=msg)
-                else:
-                    request.network_id = network['uuid']
-
-                if (not request.port_id and
-                        not uuidutils.is_uuid_like(request.network_id)):
-                    br_uuid = request.network_id.split('-', 1)[-1]
-                    if not uuidutils.is_uuid_like(br_uuid):
-                        msg = _("Bad networks format: network uuid is "
-                                "not in proper format "
-                                "(%s)") % request.network_id
-                        raise exc.HTTPBadRequest(explanation=msg)
-
-                # duplicate networks are allowed only for neutron v2.0
-                if (not utils.is_neutron() and request.network_id and
-                        request.network_id in network_uuids):
-                    expl = (_("Duplicate networks"
-                              " (%s) are not allowed") %
-                            request.network_id)
-                    raise exc.HTTPBadRequest(explanation=expl)
-                network_uuids.append(request.network_id)
-                networks.append(request)
-            except KeyError as key:
-                expl = _('Bad network format: missing %s') % key
-                raise exc.HTTPBadRequest(explanation=expl)
-            except TypeError:
-                expl = _('Bad networks format')
-                raise exc.HTTPBadRequest(explanation=expl)
-
-        return objects.NetworkRequestList(objects=networks)
-
-    def _get_server_admin_password(self, server):
-        """Determine the admin password for a server on creation."""
-        try:
-            password = server['adminPass']
-        except KeyError:
-            password = utils.generate_password()
-        return password
-
-    def _get_server_search_options(self, req):
-        """Return server search options allowed by non-admin."""
-        opt_list = ('reservation_id', 'name', 'status', 'image', 'flavor',
-                    'ip', 'changes-since', 'all_tenants')
-        if api_version_request.is_supported(req, min_version='2.5'):
-            opt_list += ('ip6',)
-        return opt_list
-
-    def _get_instance(self, context, instance_uuid):
-        try:
-            attrs = ['system_metadata', 'metadata']
-            return objects.Instance.get_by_uuid(context, instance_uuid,
-                                                expected_attrs=attrs)
-        except exception.InstanceNotFound as e:
-            raise webob.exc.HTTPNotFound(explanation=e.format_message())
-
-
-
-
-
-    # NOTE(vish): Without this regex, b64decode will happily
-    #             ignore illegal bytes in the base64 encoded
-    #             data.
-    B64_REGEX = re.compile('^(?:[A-Za-z0-9+\/]{4})*'
-                           '(?:[A-Za-z0-9+\/]{2}=='
-                           '|[A-Za-z0-9+\/]{3}=)?$')
-
-    def _decode_base64(self, data):
-        data = re.sub(r'\s', '', data)
-        if not self.B64_REGEX.match(data):
-            return None
-        try:
-            return base64.b64decode(data)
-        except TypeError:
-            return None
 
     @extensions.expected_errors(404)
     def show(self, req, id):
@@ -471,9 +293,6 @@ class ServersController(wsgi.Controller):
     # NOTE(gmann): Parameter 'req_body' is placed to handle scheduler_hint
     # extension for V2.1. No other extension supposed to use this as
     # it will be removed soon.
-
-
-   
 
 
 def remove_invalid_options(context, search_options, allowed_search_options):
