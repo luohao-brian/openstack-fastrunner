@@ -30,7 +30,9 @@ import webob
 from webob import exc
 from sqlalchemy import *
 
+from nova.api.openstack.compute.views import servers as views_servers
 from nova.api.openstack import common
+from fastrunner import extension
 
 from fastrunner.api.openstack import extensions
 from fastrunner.api.openstack import wsgi
@@ -42,11 +44,16 @@ from fastrunner import utils
 
 ALIAS = 'servers'
 
+
+
 CONF = cfg.CONF
 CONF.import_opt('extensions_blacklist', 'fastrunner.api.openstack',
                 group='osapi_v21')
 CONF.import_opt('extensions_whitelist', 'fastrunner.api.openstack',
                 group='osapi_v21')
+
+CONF.import_opt('connection', 'fastrunner.api.openstack', group='database')
+
 
 LOG = logging.getLogger(__name__)
 authorize = extensions.os_compute_authorizer(ALIAS)
@@ -55,6 +62,8 @@ authorize = extensions.os_compute_authorizer(ALIAS)
 
 class ServersController(wsgi.Controller):
     """The Server API base controller class for the OpenStack API."""
+
+    _view_builder_class = views_servers.ViewBuilderV21
 
     @staticmethod
     def _add_location(robj):
@@ -72,7 +81,7 @@ class ServersController(wsgi.Controller):
     def __init__(self, **kwargs):
         self.extension_info = kwargs.pop('extension_info')
         super(ServersController, self).__init__(**kwargs)
-#        self.api = compute.API()
+        self.compute_api = extension.API()
 
 
     @extensions.expected_errors((400, 403))
@@ -199,37 +208,31 @@ class ServersController(wsgi.Controller):
         limit, marker = common.get_limit_and_marker(req)
         sort_keys, sort_dirs = common.get_sort_params(req.params)
 
- #       expected_attrs = ['pci_devices']
- #       if is_detail:
- #           # merge our expected attrs with what the view builder needs for
- #           # showing details
- #           expected_attrs = self._view_builder.get_show_expected_attrs(
- #                                                               expected_attrs)
- #
- #       try:
- #           instance_list = self.compute_api.get_all(elevated or context,
- #                   search_opts=search_opts, limit=limit, marker=marker,
- #                   want_objects=True, expected_attrs=expected_attrs,
- #                   sort_keys=sort_keys, sort_dirs=sort_dirs)
- #       except exception.MarkerNotFound:
- #           msg = _('marker [%s] not found') % marker
- #           raise exc.HTTPBadRequest(explanation=msg)
- #       except exception.FlavorNotFound:
- #           LOG.debug("Flavor '%s' could not be found ",
- #                     search_opts['flavor'])
- #           instance_list = objects.InstanceList()
- #
- #       if is_detail:
- #           instance_list._context = context
- #           instance_list.fill_faults()
- #           response = self._view_builder.detail(req, instance_list)
- #       else:
- #           response = self._view_builder.index(req, instance_list)
- #       req.cache_db_instances(instance_list)
- #       return response
- #
+        expected_attrs = ['pci_devices']
+        if is_detail:
+            # merge our expected attrs with what the view builder needs for
+            # showing details
+           # expected_attrs = self._view_builder.get_show_expected_attrs(
+            #                                                    expected_attrs)
+  
+        try:
+            instance_list = self.compute_api.get_all(context)
+        except exception.MarkerNotFound:
+            msg = _('marker [%s] not found') % marker
+            raise exc.HTTPBadRequest(explanation=msg)
+        except exception.FlavorNotFound:
+            LOG.debug("Flavor '%s' could not be found ",
+                      search_opts['flavor'])
+  
+       return instance_list
+ 
 
-        engine = create_engine('mysql://nova:redhat@localhost:3306/nova', echo=False)
+    def _get_servers_by_sqlalchemy(self, req, is_detail):
+        """Returns a list of servers, based on any search options specified."""
+
+
+        connection = CONF.database.connection
+        engine = create_engine(connection, echo=False)
         metadata = MetaData(engine, reflect=True)
         conn = engine.connect()
 
@@ -241,6 +244,7 @@ class ServersController(wsgi.Controller):
             instances_table.c.task_state,
             instances_table.c.uuid,
             instances_table.c.image_ref,
+            instances_table.c.display_name,
             instance_extra_table.c.flavor,
             instances_table.c.availability_zone,
             instances_table.c.host,
@@ -255,7 +259,17 @@ class ServersController(wsgi.Controller):
         
         LOG.debug("%s" %(select_str))
         instances = conn.execute(select_str)
-    
+        f_instances =[]
+        for instance in instances:
+            f_instances.append(dict(instance))
+
+        instances = f_instances
+
+        #instances._context = context
+       # instances.fill_faults()
+        response = self._view_builder.detail(req, instances)
+        return response
+
         filled_instances = []
         for instance in instances:
             status = common.status_from_state(instance['vm_state'], instance['task_state'])
