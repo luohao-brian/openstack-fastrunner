@@ -30,11 +30,13 @@ import webob
 from webob import exc
 from sqlalchemy import *
 
-from nova.api.openstack.compute.views import servers as views_servers
 from nova.api.openstack import common
-from fastrunner import extension
+#from fastrunner import extension
+#from nova.api.openstack.compute.views import servers as views_servers
 
 from fastrunner.api.openstack import extensions
+from fastrunner.api.openstack import db
+#from fastrunner import db
 from fastrunner.api.openstack import wsgi
 from fastrunner.api import validation
 from fastrunner import exception
@@ -44,26 +46,21 @@ from fastrunner import utils
 
 ALIAS = 'servers'
 
-
-
 CONF = cfg.CONF
 CONF.import_opt('extensions_blacklist', 'fastrunner.api.openstack',
                 group='osapi_v21')
 CONF.import_opt('extensions_whitelist', 'fastrunner.api.openstack',
                 group='osapi_v21')
 
-CONF.import_opt('connection', 'fastrunner.api.openstack', group='database')
+#CONF.import_opt('connection', 'fastrunner.api.openstack', group='database')
 
 
 LOG = logging.getLogger(__name__)
 authorize = extensions.os_compute_authorizer(ALIAS)
 
 
-
 class ServersController(wsgi.Controller):
     """The Server API base controller class for the OpenStack API."""
-
-    _view_builder_class = views_servers.ViewBuilderV21
 
     @staticmethod
     def _add_location(robj):
@@ -81,7 +78,7 @@ class ServersController(wsgi.Controller):
     def __init__(self, **kwargs):
         self.extension_info = kwargs.pop('extension_info')
         super(ServersController, self).__init__(**kwargs)
-        self.compute_api = extension.API()
+#        self.api = extension.API()
 
 
     @extensions.expected_errors((400, 403))
@@ -89,16 +86,17 @@ class ServersController(wsgi.Controller):
         """Returns a list of server names and ids for a given user."""
         context = req.environ['fastrunner.context']
         authorize(context, action="index")
- #       try:
- #           servers = self._get_servers(req, is_detail=False)
- #       except exception.Invalid as err:
- #           raise exc.HTTPBadRequest(explanation=err.format_message())
- #       return servers
+        try:
+            servers = self._get_servers(req, is_detail=False)
+        except exception.Invalid as err:
+            raise exc.HTTPBadRequest(explanation=err.format_message())
+        return servers
 
 
     @extensions.expected_errors((400, 403))
     def detail(self, req):
         """Returns a list of server details for a given user."""
+
         context = req.environ['fastrunner.context']
         authorize(context, action="detail")
         try:
@@ -110,14 +108,73 @@ class ServersController(wsgi.Controller):
 
     def _get_servers(self, req, is_detail):
         """Returns a list of servers, based on any search options specified."""
+        
+        search_opts = {}
+        search_opts.update(req.GET)
+        LOG.info("=====TODO: handling more search options =======")
+        
+        context = req.environ['fastrunner.context']
+
+        # all_tenant to boolean
+        all_tenants = common.is_all_tenants(search_opts)
+
+        if all_tenants:
+            if is_detail:
+                authorize(context, action="detail:get_all_tenants")
+            else:
+                authorize(context, action="index:get_all_tenants")
+        else:
+            if context.project_id:
+                search_opts['project_id'] = context.project_id
+            else:
+                search_opts['user_id'] = context.user_id
+
+        # limit, marker = common.get_limit_and_marker(req)
+        # sort_keys, sort_dirs = common.get_sort_params(req.params)
+
+        if is_detail:
+            try:
+                servers = db.instance_get_all(context, search_opts)
+            except:
+                pass
+                LOG.info("==========TODO: handing db.instance_get_all() exceptions=========")
+        else:
+            pass
+            LOG.info("=======TODO: _get_servers() for index==========")
+        
+        return servers
+    
+   
+      
+        filled_instances = []
+        for instance in instances:
+            status = common.status_from_state(instance['vm_state'], instance['task_state'])
+            #flavor = json.JSONDecoder().decode(instance['flavor'])['cur']['nova_object.data']
+            #print flavor
+            instance = {
+                'status':status,
+                'name':instance['hostname'],
+                'id':instance['uuid'],
+                'OS-EXT-STS:power_state':instance['power_state'],
+                'OS-EXT-STS:task_state':instance['task_state'],
+                'OS-EXT-AZ:availability_zone':instance['availability_zone'],
+                'OS-EXT-SRV-ATTR:host':instance['host'],
+                'OS-SRV-USG:created_at':instance['created_at'],
+                'tenant_id':instance['project_id']}
+
+            filled_instances.append(instance)
+
+        return {'servers':filled_instances}
+
+
+    def _get_servers_by_sqlalchemy_core(self, req, is_detail):
+        """Returns a list of servers, based on any search options specified."""
 
         search_opts = {}
         search_opts.update(req.GET)
-
         context = req.environ['fastrunner.context']
 
-#        remove_invalid_options(context, search_opts,
-#                self._get_server_search_options(req))
+        remove_invalid_options(context, search_opts, self._get_server_search_options(req))
 
         # Verify search by 'status' contains a valid status.
         # Convert it to filter by vm_state or task_state for compute_api.
@@ -209,28 +266,12 @@ class ServersController(wsgi.Controller):
         sort_keys, sort_dirs = common.get_sort_params(req.params)
 
         expected_attrs = ['pci_devices']
-        if is_detail:
+        #if is_detail:
             # merge our expected attrs with what the view builder needs for
             # showing details
            # expected_attrs = self._view_builder.get_show_expected_attrs(
             #                                                    expected_attrs)
-  
-        try:
-            instance_list = self.compute_api.get_all(context)
-        except exception.MarkerNotFound:
-            msg = _('marker [%s] not found') % marker
-            raise exc.HTTPBadRequest(explanation=msg)
-        except exception.FlavorNotFound:
-            LOG.debug("Flavor '%s' could not be found ",
-                      search_opts['flavor'])
-  
-       return instance_list
- 
-
-    def _get_servers_by_sqlalchemy(self, req, is_detail):
-        """Returns a list of servers, based on any search options specified."""
-
-
+                
         connection = CONF.database.connection
         engine = create_engine(connection, echo=False)
         metadata = MetaData(engine, reflect=True)
@@ -325,6 +366,9 @@ def remove_invalid_options(context, search_options, allowed_search_options):
         for opt in unknown_options:
             search_options.pop(opt, None)
 
+
+def _get_server_search_options(req):
+    LOG.info("=========TODO=================")
 
 class Servers(extensions.V21APIExtensionBase):
     """Servers."""
