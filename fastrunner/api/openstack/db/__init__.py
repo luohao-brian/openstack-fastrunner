@@ -14,8 +14,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 """
-DB abstraction for Nova
+DB abstraction for fastrunner
 """
 
-from fastrunner.api.openstack.db.api import *  # noqa
+from fastrunner.api.openstack.db.api import *  
 
