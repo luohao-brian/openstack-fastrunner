@@ -22,3 +22,10 @@ $ fastrunner-api
 ```
 curl -X GET 127.0.0.1:8774/v2.1/servers/detail -H "Accept: application/json" -H "X-Auth-Token: 123456"
 ```
+
+## Architecture
+
+![](architecture.png)
+
+## Performance
+Querying 100 vms through fastrunner API consumses 35ms, compared with 1.2s through original API. 
